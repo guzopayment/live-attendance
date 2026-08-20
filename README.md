@@ -42,3 +42,6 @@ The projector page automatically refreshes every 5 seconds and also reacts immed
 
 ## Visual background
 The live display uses the participant-page `qineeSocialDeputs.jpg` background with an emerald translucent overlay, dark teal/gold brand palette, glass/blurred surfaces, and rounded modern panels. The image is bundled at `public/qineeSocialDeputs.jpg`.
+
+
+Marquee fix: the live check-in ticker is forced to run continuously and is not disabled by prefers-reduced-motion, because this page is intended for an event projector.
