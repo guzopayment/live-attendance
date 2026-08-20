@@ -410,6 +410,7 @@ function OperatorLogin({ onLogin }) {
 }
 
 function OperatorPage() {
+  const [authenticated, setAuthenticated] = useState(() => Boolean(localStorage.getItem("adminToken")));
   const [data, setData] = useState(null);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
@@ -447,6 +448,8 @@ function OperatorPage() {
   }, [query, status, organization]);
 
   useEffect(() => {
+    if (!authenticated) return;
+
     loadSummary();
     search();
     const socket = io(SOCKET_URL, { transports: ["websocket", "polling"] });
@@ -460,11 +463,11 @@ function OperatorPage() {
       window.clearInterval(timer);
       socket.disconnect();
     };
-  }, [loadSummary, search]);
+  }, [authenticated, loadSummary, search]);
 
   const logout = () => {
     localStorage.removeItem("adminToken");
-    window.location.href = "/operator";
+    setAuthenticated(false);
   };
 
   const organizations = useMemo(() => {
@@ -473,7 +476,7 @@ function OperatorPage() {
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [summary]);
 
-  if (!localStorage.getItem("adminToken")) return <OperatorLogin onLogin={() => window.location.reload()} />;
+  if (!authenticated) return <OperatorLogin onLogin={() => setAuthenticated(true)} />;
 
   return (
     <div className="operatorPage">
