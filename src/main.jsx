@@ -106,7 +106,19 @@ function AddisAnalogClock() {
   );
 }
 
-function LiveStats({ data }) {
+function LiveBreakdownCard({ data }) {
+  const [mode, setMode] = useState("organization");
+  useEffect(() => { const timer = window.setInterval(() => setMode(v => v === "organization" ? "sex" : "organization"), 60000); return () => window.clearInterval(timer); }, []);
+  const organization = data.organizationStats?.[0];
+  const sexRows = data.sexStats || [];
+  const male = sexRows.find(r => r.label === "ወንድ" || r.label.toLowerCase() === "male");
+  const female = sexRows.find(r => r.label === "ሴት" || r.label.toLowerCase() === "female");
+  if (mode === "organization") return <div className="heroCard breakdownCard organizationBreakdown"><div className="breakdownHeader"><span>በድርጅት / ORGANIZATION</span><small>LIVE • 1 MIN</small></div><div className="breakdownContent"><div className="breakdownMain"><strong>{organization?.present ?? 0}</strong><div><b>{organization?.label || "No organization data"}</b><small>{organization ? `${organization.total} registered` : "Waiting for data"}</small></div></div><div className="breakdownPercent">{percent(organization?.presentPercent || 0)}<small>PRESENT</small></div></div><div className="breakdownFooter">Top organization by live attendance</div></div>;
+  const total = (male?.total || 0) + (female?.total || 0), present = (male?.present || 0) + (female?.present || 0);
+  return <div className="heroCard breakdownCard sexBreakdown"><div className="breakdownHeader"><span>በፆታ / SEX</span><small>LIVE • 1 MIN</small></div><div className="sexStatsGrid"><div><b>ወንድ</b><strong>{male?.present ?? 0}</strong><small>{male?.total ?? 0} total</small></div><div><b>ሴት</b><strong>{female?.present ?? 0}</strong><small>{female?.total ?? 0} total</small></div></div><div className="breakdownFooter">{total ? `${percent((present/total)*100)} present by sex` : "Waiting for sex data"}</div></div>;
+}
+
+function LiveStats({ data, showBreakdown = false }) {
   return (
     <section className="heroStats">
       <div className="heroCard registered">
@@ -139,6 +151,7 @@ function LiveStats({ data }) {
           </div>
         </div>
       </div>
+      {showBreakdown && <LiveBreakdownCard data={data} />}
     </section>
   );
 }
@@ -265,6 +278,54 @@ function ParticipantTable({ rows, absent = false, operator = false, pageSize = 1
   );
 }
 
+
+function RecentCheckinTicker({ rows = [] }) {
+  const items = useMemo(() => {
+    return [...rows]
+      .filter((row) => row && row.checkedInAt)
+      .sort((a, b) => new Date(b.checkedInAt) - new Date(a.checkedInAt))
+      .slice(0, 20);
+  }, [rows]);
+
+  if (!items.length) {
+    return (
+      <section className="recentCheckinTicker" aria-label="Recent attendance check-ins">
+        <div className="tickerLabel">
+          <span className="tickerPulse" />
+          <span>RECENT CHECK-IN</span>
+        </div>
+        <div className="tickerEmpty">Waiting for the first QR scan…</div>
+      </section>
+    );
+  }
+
+  // Duplicate the track so the CSS marquee can loop seamlessly without user interaction.
+  const loopItems = [...items, ...items];
+
+  return (
+    <section className="recentCheckinTicker" aria-label="Recent attendance check-ins">
+      <div className="tickerLabel">
+        <span className="tickerPulse" />
+        <span>LIVE CHECK-INS</span>
+      </div>
+      <div className="tickerViewport">
+        <div className="tickerTrack">
+          {loopItems.map((row, index) => (
+            <div className="tickerItem" key={`${row.id}-${index}`}>
+              <span className="tickerCheck">✓</span>
+              <div className="tickerPerson">
+                <strong>{row.name || "—"}</strong>
+                <small>{row.organization || "—"}</small>
+              </div>
+              <time>{formatTime(row.checkedInAt)}</time>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function LivePage() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -330,7 +391,8 @@ function LivePage() {
       </header>
 
       <main className="liveMain">
-        <LiveStats data={data} />
+        <RecentCheckinTicker rows={data.present} />
+        <LiveStats data={data} showBreakdown />
 
         <div className="rateBanner">
           <div>
