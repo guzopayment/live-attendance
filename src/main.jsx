@@ -659,6 +659,7 @@ function LivePage() {
           <span>Last updated: {formatDateTime(updatedAt)}</span>
           <a href="/operator">Operator / Admin Search</a>
         </footer>
+        <Footer />
       </main>
     </div>
   );
@@ -885,8 +886,8 @@ function OperatorPage() {
           </div>
           <ParticipantTable rows={data || []} operator />
         </section>
+        <Footer />
       </main>
-      <Footer />
     </div>
   );
 }
