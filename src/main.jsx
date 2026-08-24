@@ -106,19 +106,7 @@ function AddisAnalogClock() {
   );
 }
 
-function LiveBreakdownCard({ data }) {
-  const [mode, setMode] = useState("organization");
-  useEffect(() => { const timer = window.setInterval(() => setMode(v => v === "organization" ? "sex" : "organization"), 60000); return () => window.clearInterval(timer); }, []);
-  const organization = data.organizationStats?.[0];
-  const sexRows = data.sexStats || [];
-  const male = sexRows.find(r => r.label === "ወንድ" || r.label.toLowerCase() === "male");
-  const female = sexRows.find(r => r.label === "ሴት" || r.label.toLowerCase() === "female");
-  if (mode === "organization") return <div className="heroCard breakdownCard organizationBreakdown"><div className="breakdownHeader"><span>በድርጅት / ORGANIZATION</span><small>LIVE • 1 MIN</small></div><div className="breakdownContent"><div className="breakdownMain"><strong>{organization?.present ?? 0}</strong><div><b>{organization?.label || "No organization data"}</b><small>{organization ? `${organization.total} registered` : "Waiting for data"}</small></div></div><div className="breakdownPercent">{percent(organization?.presentPercent || 0)}<small>PRESENT</small></div></div><div className="breakdownFooter">Top organization by live attendance</div></div>;
-  const total = (male?.total || 0) + (female?.total || 0), present = (male?.present || 0) + (female?.present || 0);
-  return <div className="heroCard breakdownCard sexBreakdown"><div className="breakdownHeader"><span>በፆታ / SEX</span><small>LIVE • 1 MIN</small></div><div className="sexStatsGrid"><div><b>ወንድ</b><strong>{male?.present ?? 0}</strong><small>{male?.total ?? 0} total</small></div><div><b>ሴት</b><strong>{female?.present ?? 0}</strong><small>{female?.total ?? 0} total</small></div></div><div className="breakdownFooter">{total ? `${percent((present/total)*100)} present by sex` : "Waiting for sex data"}</div></div>;
-}
-
-function LiveStats({ data, showBreakdown = false }) {
+function LiveStats({ data }) {
   return (
     <section className="heroStats">
       <div className="heroCard registered">
@@ -151,7 +139,245 @@ function LiveStats({ data, showBreakdown = false }) {
           </div>
         </div>
       </div>
-      {showBreakdown && <LiveBreakdownCard data={data} />}
+    </section>
+  );
+}
+
+function OrganizationGenderCards({
+  analytics = {},
+  organizationStats = [],
+  presentRows = [],
+  absentRows = [],
+}) {
+  // IMPORTANT: the live endpoint already returns the actual database rows in
+  // `present` and `absent`. Build the organization totals from those rows on
+  // the client as a safety net. This prevents the projector from showing
+  // "No organization" when an older backend omits organizationStats.
+  const organizations = useMemo(() => {
+    const normalizeSex = (value) => {
+      const sex = String(value ?? "").trim().toLowerCase();
+      if (["ወንድ", "male", "m", "man", "men"].includes(sex)) return "male";
+      if (["ሴት", "female", "f", "woman", "women"].includes(sex)) return "female";
+      return "unknown";
+    };
+
+    const makeBucket = () => ({ total: 0, male: 0, female: 0, unknown: 0 });
+    const add = (bucket, row) => {
+      bucket.total += 1;
+      bucket[normalizeSex(row?.sex)] += 1;
+    };
+
+    const allRows = [
+      ...(Array.isArray(presentRows) ? presentRows : []),
+      ...(Array.isArray(absentRows) ? absentRows : []),
+    ];
+
+    const map = new Map();
+    for (const row of allRows) {
+      const name = String(row?.organization ?? "").replace(/\s+/g, " ").trim();
+      const organization = name || "ያልተገለጸ ድርጅት / Unknown organization";
+
+      if (!map.has(organization)) {
+        map.set(organization, {
+          organization,
+          registered: makeBucket(),
+          present: makeBucket(),
+          absent: makeBucket(),
+        });
+      }
+
+      const item = map.get(organization);
+      add(item.registered, row);
+      const isPresent =
+        String(row?.status ?? "").toLowerCase() === "present" ||
+        Boolean(row?.checkedInAt);
+
+      if (isPresent) add(item.present, row);
+      else add(item.absent, row);
+    }
+
+    // Prefer the live database rows above. If they are unavailable for any
+    // reason, use the backend's organizationStats response.
+    if (map.size > 0) {
+      return [...map.values()].sort((a, b) => b.registered.total - a.registered.total);
+    }
+
+    const rows = Array.isArray(organizationStats) ? organizationStats : [];
+    return rows
+      .filter((item) => String(item?.organization || item?.organizationName || "").trim())
+      .map((item) => ({
+        ...item,
+        organization: String(item.organizationName || item.organization).trim(),
+      }));
+  }, [organizationStats, presentRows, absentRows]);
+
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  useEffect(() => {
+    setActiveIndex((current) => {
+      if (!organizations.length) return 0;
+      return Math.min(current, organizations.length - 1);
+    });
+  }, [organizations.length]);
+
+  useEffect(() => {
+    if (organizations.length <= 1) return undefined;
+    const timer = window.setInterval(() => {
+      setActiveIndex((current) => (current + 1) % organizations.length);
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [organizations.length]);
+
+  const safeBucket = (bucket = {}) => {
+    const total = Number(bucket?.total ?? 0);
+    const male = Number(bucket?.male ?? bucket?.men ?? 0);
+    const female = Number(bucket?.female ?? bucket?.women ?? 0);
+    const malePercent = Number.isFinite(Number(bucket?.malePercent))
+      ? Number(bucket.malePercent)
+      : total > 0 ? Number(((male / total) * 100).toFixed(1)) : 0;
+    const femalePercent = Number.isFinite(Number(bucket?.femalePercent))
+      ? Number(bucket.femalePercent)
+      : total > 0 ? Number(((female / total) * 100).toFixed(1)) : 0;
+    return { total, male, female, malePercent, femalePercent };
+  };
+
+  // The backend's organizationStats is the source of truth. Each organization
+  // contains its own registered, present and absent gender totals.
+  const selected = organizations[activeIndex] || null;
+  const selectedName = String(
+    selected?.organizationName || selected?.organization || "ድርጅት አልተገኘም / No organization"
+  ).trim();
+
+  const registered = safeBucket(selected?.registered);
+  const present = safeBucket(selected?.present);
+  const absent = safeBucket(selected?.absent);
+  const recent = analytics?.recent || {};
+  const isRecentOrganization =
+    String(recent?.organization || "").trim() === selectedName;
+  const latestParticipant = isRecentOrganization ? recent?.latestParticipant : null;
+
+  const metric = (bucket) => (
+    <div className="bigAnalyticsMetric">
+      <div className="bigAnalyticsMetricHead">
+        <span>ወንድ / MEN</span>
+        <strong>{bucket.male}</strong>
+      </div>
+      <div className="bigAnalyticsProgress">
+        <span style={{ width: `${Math.min(100, Math.max(0, bucket.malePercent))}%` }} />
+      </div>
+      <small>{percent(bucket.malePercent)}</small>
+
+      <div className="bigAnalyticsMetricHead femaleRow">
+        <span>ሴት / WOMEN</span>
+        <strong>{bucket.female}</strong>
+      </div>
+      <div className="bigAnalyticsProgress">
+        <span style={{ width: `${Math.min(100, Math.max(0, bucket.femalePercent))}%` }} />
+      </div>
+      <small>{percent(bucket.femalePercent)}</small>
+    </div>
+  );
+
+  const stateBlock = (title, bucket, tone) => (
+    <article className={`bigAnalyticsState ${tone}`}>
+      <div className="bigAnalyticsStateTitle">
+        <span>{title}</span>
+        <strong>{bucket.total}</strong>
+      </div>
+      {metric(bucket)}
+    </article>
+  );
+
+  return (
+    <section className="organizationAnalytics" aria-live="polite">
+      <div className="bigAnalyticsCard">
+        <div className="bigAnalyticsTop">
+          <div className="bigAnalyticsTitle">
+            <span className="analyticsKicker">LIVE ORGANIZATION ANALYTICS</span>
+            <h2>{selectedName}</h2>
+            <p>Organization-by-organization live attendance • changes automatically every 15 seconds</p>
+          </div>
+
+          <div className="bigAnalyticsRotation" aria-label="Organization rotation">
+            <span>{organizations.length ? `${activeIndex + 1} / ${organizations.length}` : "0 / 0"}</span>
+            <div className="bigAnalyticsDots">
+              {organizations.slice(0, 20).map((item, index) => (
+                <i key={`${item.organization}-${index}`} className={index === activeIndex ? "active" : ""} />
+              ))}
+              {organizations.length > 20 && <b>+{organizations.length - 20}</b>}
+            </div>
+          </div>
+        </div>
+
+        {selected ? (
+          <>
+            <div className="bigAnalyticsOrganizationBar">
+              <span>ORGANIZATION</span>
+              <strong title={selectedName}>{selectedName}</strong>
+            </div>
+
+            <div className="bigAnalyticsStates">
+              {stateBlock("የተመዘገቡ / REGISTERED", registered, "registeredState")}
+              {stateBlock("የተገኙ / PRESENT", present, "presentState")}
+              {stateBlock("ያልተገኙ / ABSENT", absent, "absentState")}
+            </div>
+
+            <div className="bigAnalyticsFooter">
+              <div>
+                <span>ORGANIZATION TOTAL</span>
+                <strong>{registered.total}</strong>
+              </div>
+              <div>
+                <span>PRESENT</span>
+                <strong>{present.total}</strong>
+              </div>
+              <div>
+                <span>ABSENT</span>
+                <strong>{absent.total}</strong>
+              </div>
+              <div className="bigAnalyticsLatest">
+                <span>RECENTLY PRESENT</span>
+                <strong>{latestParticipant?.name || "—"}</strong>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="bigAnalyticsEmpty">ድርጅት አልተገኘም / No organization data available.</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function RecentCheckinTicker({ rows = [] }) {
+  const recentRows = Array.isArray(rows) ? rows.slice(0, 12) : [];
+  const tickerRows = recentRows.length ? [...recentRows, ...recentRows] : [];
+
+  return (
+    <section className="recentCheckinTicker" aria-label="Live check-ins">
+      <div className="tickerLabel">
+        <span className="tickerPulse" />
+        <strong>LIVE CHECK-INS</strong>
+      </div>
+
+      <div className="tickerViewport">
+        {tickerRows.length ? (
+          <div className="tickerTrack">
+            {tickerRows.map((row, index) => (
+              <div className="tickerItem" key={`${row.id || row.name}-${index}`}>
+                <span className="tickerCheck">✓</span>
+                <div className="tickerPerson">
+                  <strong>{row.name || "—"}</strong>
+                  <small>{row.organization || "—"}</small>
+                </div>
+                <time>{formatTime(row.checkedInAt)}</time>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="tickerEmpty">No check-ins yet.</div>
+        )}
+      </div>
     </section>
   );
 }
@@ -163,166 +389,102 @@ function SectionTitle({ icon, title, count }) {
         {icon}
         <div>
           <h2>{title}</h2>
-          <span>{count} participants</span>
+          <span>{count} participant{count === 1 ? "" : "s"}</span>
         </div>
       </div>
     </div>
   );
 }
 
-function ParticipantTable({ rows, absent = false, operator = false, pageSize = 10 }) {
+function ParticipantTable({ rows = [], absent = false, operator = false }) {
   const [page, setPage] = useState(1);
-  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const perPage = 8;
 
-  useEffect(() => {
-    setPage(1);
-  }, [rows, pageSize]);
+  useEffect(() => setPage(1), [rows, operator, absent]);
 
-  useEffect(() => {
-    if (page > totalPages) setPage(totalPages);
-  }, [page, totalPages]);
-
-  const startIndex = (page - 1) * pageSize;
-  const pageRows = rows.slice(startIndex, startIndex + pageSize);
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const totalPages = Math.max(1, Math.ceil(safeRows.length / perPage));
+  const currentPage = Math.min(page, totalPages);
+  const visibleRows = safeRows.slice(
+    (currentPage - 1) * perPage,
+    currentPage * perPage,
+  );
 
   return (
-    <>
-      <div className={`tableShell ${absent ? "absentShell" : ""}`}>
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>ስም / Name</th>
-              <th>ድርጅት / Organization</th>
-              {operator && <th>Phone</th>}
-              {operator && <th>Sex</th>}
-              {operator ? <th>Status</th> : <th>{absent ? "Status" : "Checked in"}</th>}
-              {operator && <th>Checked in</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {pageRows.length ? (
-              pageRows.map((row, index) => (
-                <tr key={row.id}>
-                  <td>{startIndex + index + 1}</td>
+    <div className={`tableShell ${absent ? "absentShell" : ""}`}>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>ስም / NAME</th>
+            <th>ድርጅት / ORGANIZATION</th>
+            <th>ፆታ / SEX</th>
+            {operator && <th>PHONE</th>}
+            <th>{operator ? "STATUS" : "CHECKED IN"}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {visibleRows.length ? (
+            visibleRows.map((row, index) => {
+              const isPresent = row.status
+                ? String(row.status).toLowerCase() === "present"
+                : Boolean(row.checkedInAt);
+
+              return (
+                <tr key={row.id || `${row.name}-${index}`}>
+                  <td>{(currentPage - 1) * perPage + index + 1}</td>
                   <td className="nameCell">{row.name || "—"}</td>
                   <td>{row.organization || "—"}</td>
+                  <td>{row.sex || "—"}</td>
                   {operator && <td>{row.phone || "—"}</td>}
-                  {operator && <td>{row.sex || "—"}</td>}
-                  {operator && (
-                    <td>
-                      {row.status === "Present" ? (
-                        <span className="statusPill presentPill">PRESENT</span>
-                      ) : (
-                        <span className="statusPill absentPill">ABSENT</span>
-                      )}
-                    </td>
-                  )}
                   <td>
-                    {operator ? (
-                      row.checkedInAt ? (
-                        <span className="timeCell">
-                          <Clock3 size={15} /> {formatTime(row.checkedInAt)}
-                        </span>
-                      ) : (
-                        <span className="mutedTime">—</span>
-                      )
-                    ) : absent ? (
-                      <span className="statusPill absentPill">ABSENT</span>
-                    ) : (
+                    {isPresent ? (
                       <span className="timeCell">
-                        <Clock3 size={15} /> {formatTime(row.checkedInAt)}
+                        <Clock3 size={14} />
+                        {formatTime(row.checkedInAt)}
                       </span>
+                    ) : (
+                      <span className="absentPill">ABSENT</span>
                     )}
                   </td>
                 </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan={operator ? 7 : 4} className="emptyCell">
-                  No participants found.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+              );
+            })
+          ) : (
+            <tr>
+              <td className="emptyCell" colSpan={operator ? 6 : 5}>
+                No participants found.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
 
-      {rows.length > pageSize && (
+      {safeRows.length > 0 && (
         <div className="paginationBar">
-          <div className="paginationInfo">
-            Showing <strong>{startIndex + 1}</strong>–<strong>{Math.min(startIndex + pageSize, rows.length)}</strong> of <strong>{rows.length}</strong>
-          </div>
+          <span className="paginationInfo">
+            Page {currentPage} of {totalPages} • {safeRows.length} total
+          </span>
           <div className="paginationControls">
             <button
-              type="button"
               className="pageButton"
-              onClick={() => setPage((value) => Math.max(1, value - 1))}
-              disabled={page === 1}
+              disabled={currentPage <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
             >
-              Previous
+              Prev
             </button>
-            <span className="pageNumber">Page {page} of {totalPages}</span>
+            <span className="pageNumber">{currentPage}</span>
             <button
-              type="button"
               className="pageButton"
-              onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
-              disabled={page === totalPages}
+              disabled={currentPage >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             >
               Next
             </button>
           </div>
         </div>
       )}
-    </>
-  );
-}
-
-
-function RecentCheckinTicker({ rows = [] }) {
-  const items = useMemo(() => {
-    return [...rows]
-      .filter((row) => row && row.checkedInAt)
-      .sort((a, b) => new Date(b.checkedInAt) - new Date(a.checkedInAt))
-      .slice(0, 20);
-  }, [rows]);
-
-  if (!items.length) {
-    return (
-      <section className="recentCheckinTicker" aria-label="Recent attendance check-ins">
-        <div className="tickerLabel">
-          <span className="tickerPulse" />
-          <span>RECENT CHECK-IN</span>
-        </div>
-        <div className="tickerEmpty">Waiting for the first QR scan…</div>
-      </section>
-    );
-  }
-
-  // Duplicate the track so the CSS marquee can loop seamlessly without user interaction.
-  const loopItems = [...items, ...items];
-
-  return (
-    <section className="recentCheckinTicker" aria-label="Recent attendance check-ins">
-      <div className="tickerLabel">
-        <span className="tickerPulse" />
-        <span>LIVE CHECK-INS</span>
-      </div>
-      <div className="tickerViewport">
-        <div className="tickerTrack">
-          {loopItems.map((row, index) => (
-            <div className="tickerItem" key={`${row.id}-${index}`}>
-              <span className="tickerCheck">✓</span>
-              <div className="tickerPerson">
-                <strong>{row.name || "—"}</strong>
-                <small>{row.organization || "—"}</small>
-              </div>
-              <time>{formatTime(row.checkedInAt)}</time>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
+    </div>
   );
 }
 
@@ -392,7 +554,13 @@ function LivePage() {
 
       <main className="liveMain">
         <RecentCheckinTicker rows={data.present} />
-        <LiveStats data={data} showBreakdown />
+        <LiveStats data={data} />
+        <OrganizationGenderCards
+          analytics={data.analytics || {}}
+          organizationStats={data.organizationStats || []}
+          presentRows={data.present || []}
+          absentRows={data.absent || []}
+        />
 
         <div className="rateBanner">
           <div>
