@@ -15,6 +15,7 @@ import {
   UserX,
 } from "lucide-react";
 import "./style.css";
+import Footer from "./components/Footer";
 
 const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:10000/api";
 const SOCKET_URL =
@@ -885,6 +886,7 @@ function OperatorPage() {
           <ParticipantTable rows={data || []} operator />
         </section>
       </main>
+      <Footer />
     </div>
   );
 }
